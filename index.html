@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>QLOCKTWO-style Word Clock</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      html, body {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        background: #000;
+        color: #fff;
+        display: grid;
+        place-items: center;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", "Courier New", monospace;
+      }
+
+      /* Clock face */
+      .clock-face {
+        position: relative;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      /* Letter grid */
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(11, 1ch);
+        gap: 0.15em;
+        font-weight: 600;
+        font-size: clamp(14px, 8vmin, 56px);
+        line-height: 1;
+      }
+      .cell {
+        width: 1ch;
+        height: 1em;
+        display: grid;
+        place-items: center;
+        color: #fff;
+        opacity: 0.15;
+        transition: opacity 1000ms ease-in-out;
+      }
+      .cell.active {
+        opacity: 1;
+      }
+
+      /* Minute dots */
+      .dot {
+        position: absolute;
+        width: 0.4em;
+        height: 0.4em;
+        background: #fff;
+        border-radius: 50%;
+        opacity: 0.25;
+        transition: opacity 400ms ease-in-out;
+      }
+      .dot.active { opacity: 1; }
+      .dot.tl { top: -0.8em; left: -0.8em; }
+      .dot.tr { top: -0.8em; right: -0.8em; }
+      .dot.bl { bottom: -0.8em; left: -0.8em; }
+      .dot.br { bottom: -0.8em; right: -0.8em; }
+
+      /* Hidden live region for screen readers */
+      .visually-hidden {
+        position: absolute !important;
+        width: 1px !important;
+        height: 1px !important;
+        padding: 0 !important;
+        margin: -1px !important;
+        overflow: hidden !important;
+        clip: rect(0 0 0 0) !important;
+        white-space: nowrap !important;
+        border: 0 !important;
+      }
+
+      /* ============================================================================
+         TIMEZONE NAVIGATOR STYLES
+         ============================================================================ */
+      .timezone-navigator {
+        position: absolute;
+        bottom: 2rem;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 10;
+        background: rgba(0, 0, 0, 0.8);
+        border-radius: 12px;
+        padding: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        backdrop-filter: blur(10px);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      }
+
+      .nav-arrow {
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 8px;
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        color: rgba(255, 255, 255, 0.8);
+      }
+
+      .nav-arrow:hover {
+        background: rgba(255, 255, 255, 0.2);
+        border-color: rgba(255, 255, 255, 0.4);
+        color: rgba(255, 255, 255, 1);
+        transform: scale(1.05);
+      }
+
+      .nav-arrow:active {
+        transform: scale(0.95);
+      }
+
+      .nav-arrow:focus {
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.3);
+      }
+
+      .timezone-display {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.25rem;
+        min-width: 140px;
+        text-align: center;
+      }
+
+      .timezone-name {
+        color: #fff;
+        font-size: 0.9rem;
+        font-weight: 600;
+        opacity: 0.9;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .timezone-offset {
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 0.75rem;
+        font-weight: 500;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", "Courier New", monospace;
+      }
+
+      /* Responsive design for smaller screens */
+      @media (max-width: 768px) {
+        .timezone-navigator {
+          bottom: 1rem;
+          left: 50%;
+          transform: translateX(-50%);
+          padding: 0.75rem;
+          gap: 0.75rem;
+        }
+        
+        .nav-arrow {
+          width: 36px;
+          height: 36px;
+        }
+        
+        .timezone-display {
+          min-width: 120px;
+        }
+        
+        .timezone-name {
+          font-size: 0.8rem;
+        }
+        
+        .timezone-offset {
+          font-size: 0.7rem;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .cell, .dot { transition: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ============================================================================
+         TIMEZONE NAVIGATOR - Allows users to navigate between timezones with arrows
+         ============================================================================ -->
+    <div class="timezone-navigator">
+      <button class="nav-arrow nav-left" id="timezone-left" aria-label="Previous timezone">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M15 18l-6-6 6-6"/>
+        </svg>
+      </button>
+      
+      <div class="timezone-display" id="timezone-display">
+        <span class="timezone-name">Detecting...</span>
+        <span class="timezone-offset">GMT+00:00</span>
+      </div>
+      
+      <button class="nav-arrow nav-right" id="timezone-right" aria-label="Next timezone">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 18l6-6-6-6"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="clock-face" id="clock">
+      <div class="grid" id="grid" aria-hidden="true"></div>
+      <div class="dot tl" aria-hidden="true"></div>
+      <div class="dot tr" aria-hidden="true"></div>
+      <div class="dot bl" aria-hidden="true"></div>
+      <div class="dot br" aria-hidden="true"></div>
+      <div id="live-time" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
+    </div>
+
+    <script>
+      (function () {
+        // ============================================================================
+        // GRID LAYOUT - This defines the physical arrangement of letters on the clock
+        // ============================================================================
+        // Each string represents one row of the clock face
+        // Letters are positioned to spell out time-related words when activated
+        // Note: Some letters are unused but help maintain grid alignment
+        const GRID = [
+          "ITLISASTIME",    // Row 0: "IT IS AS TIME" (spaces removed for grid alignment)
+          "ACQUARTERDC",    // Row 1: "A QUARTER D C" (spaces removed, D and C are unused)
+          "TWENTYFIVEX",    // Row 2: "TWENTY FIVE X" (X is unused)
+          "HALFBTENFTO",    // Row 3: "HALF B TEN F TO" (B and F are unused)
+          "PASTERUNINE",    // Row 4: "PAST ERU NINE" (ERU are unused)
+          "ONESIXTHREE",    // Row 5: "ONE SIX THREE"
+          "FOURFIVETWO",    // Row 6: "FOUR FIVE TWO"
+          "EIGHTELEVEN",    // Row 7: "EIGHT ELEVEN"
+          "SEVENTWELVE",    // Row 8: "SEVEN TWELVE"
+          "TENSEOCLOCK",    // Row 9: "TEN SE O'CLOCK" (SE are unused)
+        ];
+
+        // ============================================================================
+        // WORD MAPPINGS - Maps each time word to its position in the grid
+        // ============================================================================
+        // Each word has: { row: grid row (0-9), start: start column, end: end column }
+        // Columns are inclusive (start to end, including both)
+        const WORDS = {
+          // Always displayed words (every time display starts with "IT IS")
+          IT: { row: 0, start: 0, end: 1 },      // "IT" in row 0, columns 0-1
+          IS: { row: 0, start: 3, end: 4 },      // "IS" in row 0, columns 3-4
+
+          // Minute-related words (for "five past", "quarter to", etc.)
+          FIVE_MIN:   { row: 2, start: 6, end: 9 },  // "FIVE" in row 2, columns 6-9
+          TEN_MIN:    { row: 3, start: 5, end: 7 },  // "TEN" in row 3, columns 5-7
+          QUARTER:    { row: 1, start: 2, end: 8 },  // "QUARTER" in row 1, columns 2-8
+          TWENTY:     { row: 2, start: 0, end: 5 },  // "TWENTY" in row 2, columns 0-5
+          HALF:       { row: 3, start: 0, end: 3 },  // "HALF" in row 3, columns 0-3
+          PAST:       { row: 4, start: 0, end: 3 },  // "PAST" in row 4, columns 0-3
+          TO:         { row: 3, start: 9, end: 10 }, // "TO" in row 3, columns 9-10
+          OCLOCK:     { row: 9, start: 5, end: 10 }, // "O'CLOCK" in row 9, columns 5-10
+
+          // Hour words (1-12) - these tell us which hour to display
+          ONE:        { row: 5, start: 0, end: 2 },  // "ONE" in row 5, columns 0-2
+          TWO:        { row: 6, start: 8, end: 10 }, // "TWO" in row 6, columns 8-10
+          THREE:      { row: 5, start: 6, end: 10 }, // "THREE" in row 5, columns 6-10
+          FOUR:       { row: 6, start: 0, end: 3 },  // "FOUR" in row 6, columns 0-3
+          FIVE_HOUR:  { row: 6, start: 4, end: 7 },  // "FIVE" in row 6, columns 4-7
+          SIX:        { row: 5, start: 3, end: 5 },  // "SIX" in row 5, columns 3-5
+          SEVEN:      { row: 8, start: 0, end: 4 },  // "SEVEN" in row 8, columns 0-4
+          EIGHT:      { row: 7, start: 0, end: 4 },  // "EIGHT" in row 7, columns 0-4
+          NINE:       { row: 4, start: 7, end: 10 }, // "NINE" in row 4, columns 7-10
+          TEN_HOUR:   { row: 9, start: 0, end: 2 },  // "TEN" in row 9, columns 0-2
+          ELEVEN:     { row: 7, start: 5, end: 10 }, // "ELEVEN" in row 7, columns 5-10
+          TWELVE:     { row: 8, start: 5, end: 10 }, // "TWELVE" in row 8, columns 5-10
+        };
+
+        // ============================================================================
+        // DOM ELEMENT REFERENCES - Get references to important HTML elements
+        // ============================================================================
+        const gridEl = document.getElementById('grid');        // The main grid container
+        const liveEl = document.getElementById('live-time');   // Hidden element for screen readers
+        const dots = Array.from(document.querySelectorAll('.dot')); // The four corner dots
+
+        // ============================================================================
+        // BUILD THE LETTER GRID - Create all the letter elements in the DOM
+        // ============================================================================
+        // This creates a 2D array where letterElements[row][col] gives us the DOM element
+        // for the letter at that specific position
+        const letterElements = []; // 2D array [row][col] -> DOM element
+        for (let r = 0; r < GRID.length; r++) {
+          const rowStr = GRID[r];  // Get the string for this row (e.g., "ITLISASTIME")
+          const rowArr = [];        // Array to hold elements for this row
+          for (let c = 0; c < rowStr.length; c++) {
+            // Create a span element for each letter
+            const span = document.createElement('span');
+            span.className = 'cell';                    // CSS class for styling
+            span.dataset.row = String(r);               // Store row position as data attribute
+            span.dataset.col = String(c);               // Store column position as data attribute
+            span.textContent = rowStr[c];               // Set the actual letter text
+            gridEl.appendChild(span);                   // Add to the DOM
+            rowArr.push(span);                          // Store reference in our 2D array
+          }
+          letterElements.push(rowArr);                  // Add this row to our 2D array
+        }
+
+        // ============================================================================
+        // PRECOMPUTE WORD ELEMENT MAPPINGS - Create fast lookup tables
+        // ============================================================================
+        // This creates a mapping from word keys (like "ONE", "PAST") to arrays of DOM elements
+        // This makes it very fast to find which elements to activate for any given word
+        const wordToElements = {};
+        for (const [key, range] of Object.entries(WORDS)) {
+          const elements = [];
+          // For each word, collect all the DOM elements it spans
+          for (let c = range.start; c <= range.end; c++) {
+            elements.push(letterElements[range.row][c]);
+          }
+          wordToElements[key] = elements;  // Store the array of elements for this word
+        }
+
+        // ============================================================================
+        // STATE VARIABLES - Track the current state of the clock
+        // ============================================================================
+        let currentActive = new Set(); // Set of currently active DOM elements (for performance)
+        let lastMinute = null;         // Track last seen minute to avoid unnecessary updates
+
+        // ============================================================================
+        // SET ACTIVE WORDS - This is the core function that controls which letters light up
+        // ============================================================================
+        // This function takes an array of word keys (like ["IT", "IS", "FIVE", "PAST", "ONE"])
+        // and activates the corresponding letters while deactivating others
+        function setActiveWords(wordKeys) {
+          // Step 1: Figure out which elements should be active next
+          const nextActive = new Set();
+          for (const key of wordKeys) {
+            const els = wordToElements[key];  // Get the DOM elements for this word
+            if (!els) continue;               // Skip if word not found
+            for (const el of els) nextActive.add(el);  // Add all elements for this word
+          }
+          
+          // Step 2: Fade out current active words that are no longer needed
+          // This creates the smooth transition effect when time changes
+          for (const el of currentActive) {
+            if (!nextActive.has(el)) {
+              el.style.transition = 'opacity 1000ms ease-out';  // Smooth fade out
+              el.classList.remove('active');                     // Remove active class (fades to 15% opacity)
+            }
+          }
+          
+          // Step 3: Fade in new active words
+          // This makes new time words smoothly appear
+          for (const el of nextActive) {
+            if (!currentActive.has(el)) {
+              el.style.transition = 'opacity 1000ms ease-in';   // Smooth fade in
+              el.classList.add('active');                        // Add active class (fades to 100% opacity)
+            }
+          }
+          
+          // Step 4: Update our tracking of which elements are currently active
+          currentActive = nextActive;
+        }
+
+        // ============================================================================
+        // UTILITY FUNCTIONS - Helper functions for time formatting and conversion
+        // ============================================================================
+        
+        // Format a number to always have 2 digits (e.g., 5 -> "05", 12 -> "12")
+        function two(n) { return String(n).padStart(2, '0'); }
+
+        // Convert 12-hour format to the corresponding word key
+        // This maps numbers 1-12 to the word keys defined in WORDS object
+        function getHourKey(hour12) {
+          switch (hour12) {
+            case 1: return 'ONE';
+            case 2: return 'TWO';
+            case 3: return 'THREE';
+            case 4: return 'FOUR';
+            case 5: return 'FIVE_HOUR';    // Note: Different from FIVE_MIN (minutes)
+            case 6: return 'SIX';
+            case 7: return 'SEVEN';
+            case 8: return 'EIGHT';
+            case 9: return 'NINE';
+            case 10: return 'TEN_HOUR';    // Note: Different from TEN_MIN (minutes)
+            case 11: return 'ELEVEN';
+            case 12: return 'TWELVE';
+          }
+        }
+
+        // ============================================================================
+        // COMPUTE WORD KEYS - This is the brain of the clock that converts time to words
+        // ============================================================================
+        // This function takes a Date object and returns an array of word keys that should be displayed
+        // Example: 3:25 PM -> ["IT", "IS", "FIVE", "PAST", "THREE"]
+        function computeWordKeys(date) {
+          const h24 = date.getHours();    // Get hour in 24-hour format (0-23)
+          const m = date.getMinutes();    // Get minutes (0-59)
+
+          // ============================================================================
+          // MINUTE ROUNDING LOGIC - Round minutes to nearest 5 for word display
+          // ============================================================================
+          // The clock only shows time in 5-minute increments (e.g., "five past", "ten past")
+          // We round to the nearest 5 minutes to determine which words to show
+          const roundedMinutes = Math.round(m / 5) * 5; // 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55
+          let bucket = (roundedMinutes / 5) % 12;      // Convert to bucket 0-11 for easier logic
+
+          // ============================================================================
+          // HOUR ADJUSTMENT LOGIC - Handle edge cases when minutes round to 60
+          // ============================================================================
+          let displayHour = h24;
+          if (roundedMinutes === 60) {
+            // If minutes round to 60, we're actually at the next hour
+            bucket = 0;           // Set bucket to 0 (o'clock)
+            displayHour = h24 + 1; // Move to next hour
+          }
+
+          // ============================================================================
+          // "TO" vs "PAST" LOGIC - Determine if we're approaching the next hour
+          // ============================================================================
+          // Buckets 7-11 (35-55 minutes) use "TO" instead of "PAST"
+          // Example: 3:35 -> "TWENTY-FIVE TO FOUR" (not "TWENTY-FIVE PAST THREE")
+          const isTo = bucket > 6 && bucket !== 0; // 35..55 -> TO
+          if (isTo) displayHour += 1;               // Show the next hour when using "TO"
+
+          // Convert to 12-hour format (1-12)
+          const hour12 = ((displayHour % 12) || 12);
+
+          // ============================================================================
+          // BUILD THE WORD ARRAY - Start with "IT IS" and add time-specific words
+          // ============================================================================
+          const keys = ['IT', 'IS'];  // Every time display starts with "IT IS"
+
+          // Special case: Exactly on the hour (bucket 0)
+          if (bucket === 0) {
+            keys.push(getHourKey(hour12));  // Add the hour word
+            keys.push('OCLOCK');            // Add "O'CLOCK"
+            return keys;                    // Done! (e.g., "IT IS THREE O'CLOCK")
+          }
+
+          // ============================================================================
+          // MINUTE PHRASE LOGIC - Add the appropriate minute words
+          // ============================================================================
+          // Each bucket represents a different minute phrase
+          switch (bucket) {
+            case 1: // 5 minutes past (e.g., "FIVE PAST THREE")
+            case 11: // 5 minutes to (e.g., "FIVE TO FOUR")
+              keys.push('FIVE_MIN');
+              break;
+            case 2:  // 10 minutes past
+            case 10: // 10 minutes to
+              keys.push('TEN_MIN');
+              break;
+            case 3:  // 15 minutes past (quarter past)
+            case 9:  // 15 minutes to (quarter to)
+              keys.push('QUARTER');
+              break;
+            case 4:  // 20 minutes past
+            case 8:  // 20 minutes to
+              keys.push('TWENTY');
+              break;
+            case 5:  // 25 minutes past
+            case 7:  // 25 minutes to
+              keys.push('TWENTY', 'FIVE_MIN'); // "TWENTY FIVE" (two words)
+              break;
+            case 6:  // 30 minutes (half past)
+              keys.push('HALF');
+              break;
+          }
+
+          // ============================================================================
+          // FINAL WORDS - Add "PAST"/"TO" and the hour
+          // ============================================================================
+          keys.push(isTo ? 'TO' : 'PAST');        // Add "PAST" or "TO"
+          keys.push(getHourKey(hour12));          // Add the hour word
+          return keys;                            // Return complete word array
+        }
+
+        // ============================================================================
+        // UPDATE DOTS - Control the four corner dots that show remaining minutes
+        // ============================================================================
+        // The dots show how many minutes are left until the next 5-minute increment
+        // Example: At 3:22, we're 2 minutes past 3:20, so 2 dots light up
+        function updateDots(date) {
+          const remainder = date.getMinutes() % 5; // Get minutes past the last 5-min increment (0-4)
+          // Order: tl (top-left), tr (top-right), bl (bottom-left), br (bottom-right)
+          // Each dot represents 1 minute, so at 3:22, dots 0 and 1 light up
+          for (let i = 0; i < dots.length; i++) {
+            dots[i].classList.toggle('active', i < remainder);
+          }
+        }
+
+        // ============================================================================
+        // UPDATE LIVE REGION - Update the hidden text for screen readers
+        // ============================================================================
+        // This provides accessibility by announcing the exact time to screen readers
+        // Format: "14:25" (24-hour format)
+        function updateLiveRegion(date) {
+          const hh = two(date.getHours());    // Format hours to 2 digits
+          const mm = two(date.getMinutes());  // Format minutes to 2 digits
+          liveEl.textContent = `${hh}:${mm}`; // Set the text (e.g., "14:25")
+        }
+
+        // ============================================================================
+        // TICK FUNCTION - The main update function that runs every second
+        // ============================================================================
+        // This function is called every second to keep the clock current
+        // It only recomputes words when the minute actually changes (for performance)
+        function tick() {
+          const now = getTimeInSelectedTimezone();  // Get time in selected timezone
+          const minute = now.getMinutes();          // Get current minute
+
+          console.log('Tick - Current time:', now.toLocaleTimeString(), 'Minute:', minute, 'Last minute:', lastMinute);
+
+          // Only update words when the minute changes (every 5 minutes typically)
+          // This prevents unnecessary recalculations and keeps performance smooth
+          if (minute !== lastMinute) {
+            lastMinute = minute;                    // Remember this minute
+            const keys = computeWordKeys(now);      // Calculate which words to show
+            console.log('Computing new words:', keys);
+            setActiveWords(keys);                   // Update the display with fade effects
+            updateDots(now);                        // Update corner dots
+            updateLiveRegion(now);                  // Update screen reader text
+          }
+          
+          // Always update dots every second for smooth animation
+          // This makes the dots appear to "count up" smoothly
+          updateDots(now);
+        }
+
+        // ============================================================================
+        // TIMEZONE VARIABLES - Global timezone state
+        // ============================================================================
+        
+        // Store the currently selected timezone
+        let selectedTimezone = 'auto';
+        
+        // ============================================================================
+        // TIMEZONE FUNCTIONS - Handle automatic timezone detection and display
+        // ============================================================================
+        
+        // Format the timezone for nice display with GMT offset
+        // Example: "America/New_York (GMT-05:00)" or "Europe/London (GMT+00:00)"
+        function formatTimezone(timezone) {
+          try {
+            if (timezone === 'auto') {
+              // For auto-detect, actually get the current timezone name and offset
+              const currentTz = getUserTimezone();
+              const now = new Date();
+              const offset = now.getTimezoneOffset();
+              const hours = Math.abs(Math.floor(offset / 60));
+              const minutes = Math.abs(offset % 60);
+              const sign = offset <= 0 ? '+' : '-';
+              
+              // Get a friendly name for the current timezone
+              const friendlyName = currentTz.split('/').pop().replace('_', ' ');
+              return `${friendlyName} (GMT${sign}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')})`;
+            } else {
+              // For specific timezone, get the offset for that timezone
+              const now = new Date();
+              const utc = new Date(now.toLocaleString("en-US", {timeZone: "UTC"}));
+              const target = new Date(now.toLocaleString("en-US", {timeZone: timezone}));
+              const offset = (target.getTime() - utc.getTime()) / 60000; // Convert to minutes
+              
+              const hours = Math.abs(Math.floor(offset / 60));
+              const minutes = Math.abs(offset % 60);
+              const sign = offset >= 0 ? '+' : '-';
+              
+              // Get a friendly name for the timezone
+              const friendlyName = timezone.split('/').pop().replace('_', ' ');
+              return `${friendlyName} (GMT${sign}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')})`;
+            }
+          } catch (e) {
+            // Fallback to just the timezone name if formatting fails
+            return timezone;
+          }
+        }
+
+        // Create and update the timezone display below the clock
+        // This shows users their current timezone and GMT offset
+        function updateTimezoneDisplay() {
+          const timezone = TIMEZONES[currentTimezoneIndex];
+          const formattedTz = formatTimezone(timezone);
+          
+          // Update the navigator display
+          const timezoneDisplay = document.getElementById('timezone-display');
+          if (timezoneDisplay) {
+            const timezoneName = timezoneDisplay.querySelector('.timezone-name');
+            const timezoneOffset = timezoneDisplay.querySelector('.timezone-offset');
+            
+            if (timezoneName && timezoneOffset) {
+              if (timezone === 'auto') {
+                const currentTz = getUserTimezone();
+                const friendlyName = currentTz.split('/').pop().replace('_', ' ');
+                timezoneName.textContent = friendlyName;
+              } else {
+                const friendlyName = timezone.split('/').pop().replace('_', ' ');
+                timezoneName.textContent = friendlyName;
+              }
+              
+              // Extract GMT offset from formatted string
+              const gmtMatch = formattedTz.match(/GMT[+-]\d{2}:\d{2}/);
+              if (gmtMatch) {
+                timezoneOffset.textContent = gmtMatch[0];
+              }
+            }
+          }
+          
+          
+        }
+
+        // ============================================================================
+        // TIMEZONE NAVIGATOR FUNCTIONALITY - Handle timezone navigation with arrows
+        // ============================================================================
+        
+        // Array of available timezones for navigation
+        const TIMEZONES = [
+          'auto', // Auto-detect (current location)
+          'America/New_York',
+          'America/Chicago', 
+          'America/Denver',
+          'America/Los_Angeles',
+          'America/Toronto',
+          'America/Vancouver',
+          'Europe/London',
+          'Europe/Paris',
+          'Europe/Berlin',
+          'Europe/Rome',
+          'Europe/Madrid',
+          'Europe/Amsterdam',
+          'Asia/Tokyo',
+          'Asia/Shanghai',
+          'Asia/Singapore',
+          'Asia/Dubai',
+          'Asia/Kolkata',
+          'Asia/Seoul',
+          'Australia/Sydney',
+          'Australia/Melbourne',
+          'Pacific/Auckland',
+          'UTC',
+          'America/Sao_Paulo',
+          'Africa/Cairo',
+          'Africa/Johannesburg'
+        ];
+        
+        // Current timezone index in the array
+        let currentTimezoneIndex = 0;
+        
+        // Get the user's current timezone automatically
+        function getUserTimezone() {
+          try {
+            return Intl.DateTimeFormat().resolvedOptions().timeZone;
+          } catch (e) {
+            return 'UTC';
+          }
+        }
+        
+        // Get time in the selected timezone
+        function getTimeInSelectedTimezone() {
+          const timezone = TIMEZONES[currentTimezoneIndex];
+          
+          if (timezone === 'auto') {
+            return new Date(); // Use local time
+          }
+          
+          try {
+            // Get current time in the selected timezone
+            const now = new Date();
+            const formatter = new Intl.DateTimeFormat('en-US', {
+              timeZone: timezone,
+              year: 'numeric',
+              month: 'numeric',
+              day: 'numeric',
+              hour: 'numeric',
+              minute: 'numeric',
+              second: 'numeric',
+              hour12: false
+            });
+            
+            const parts = formatter.formatToParts(now);
+            const values = {};
+            parts.forEach(part => {
+              if (part.type !== 'literal') {
+                values[part.type] = parseInt(part.value);
+              }
+            });
+            
+            // Create a new Date object with the timezone-adjusted values
+            const timezoneTime = new Date(
+              values.year,
+              values.month - 1, // Month is 0-indexed
+              values.day,
+              values.hour,
+              values.minute,
+              values.second
+            );
+            
+            console.log('Local time:', now.toLocaleTimeString());
+            console.log('Selected timezone time:', timezoneTime.toLocaleTimeString());
+            console.log('Timezone:', timezone);
+            
+            return timezoneTime;
+          } catch (e) {
+            console.warn('Failed to get time in selected timezone:', e);
+            return new Date(); // Fallback to local time
+          }
+        }
+        
+        // Initialize timezone navigator with current timezone
+        function initializeTimezoneNavigator() {
+          const leftArrow = document.getElementById('timezone-left');
+          const rightArrow = document.getElementById('timezone-right');
+          const timezoneDisplay = document.getElementById('timezone-display');
+          
+          if (!leftArrow || !rightArrow || !timezoneDisplay) {
+            console.error('Timezone navigator elements not found');
+            return;
+          }
+          
+          // Find the current timezone in our array
+          const currentTz = getUserTimezone();
+          const foundIndex = TIMEZONES.findIndex(tz => tz === currentTz);
+          
+          if (foundIndex !== -1) {
+            currentTimezoneIndex = foundIndex;
+          } else {
+            // If not found, start with auto-detect
+            currentTimezoneIndex = 0;
+          }
+          
+          console.log('Current timezone detected:', currentTz);
+          console.log('Starting at index:', currentTimezoneIndex);
+          
+          // Set up event listeners
+          leftArrow.addEventListener('click', navigateLeft);
+          rightArrow.addEventListener('click', navigateRight);
+          
+          // Update the display
+          updateTimezoneDisplay();
+          console.log('Timezone navigator initialized');
+        }
+        
+        // Navigate to previous timezone
+        function navigateLeft() {
+          currentTimezoneIndex = (currentTimezoneIndex - 1 + TIMEZONES.length) % TIMEZONES.length;
+          console.log('Navigated left to:', TIMEZONES[currentTimezoneIndex]);
+          updateTimezoneDisplay();
+          // Trigger clock update
+          lastMinute = null;
+          tick();
+        }
+        
+        // Navigate to next timezone
+        function navigateRight() {
+          currentTimezoneIndex = (currentTimezoneIndex + 1) % TIMEZONES.length;
+          console.log('Navigated right to:', TIMEZONES[currentTimezoneIndex]);
+          updateTimezoneDisplay();
+          // Trigger clock update
+          lastMinute = null;
+          tick();
+        }
+        
+        // ============================================================================
+        // INITIALIZATION AND INTERVALS - Start the clock and set up automatic updates
+        // ============================================================================
+        
+        // Initial render - Show the current time immediately when page loads
+        tick();                      // Display current time
+        
+        // Set up automatic updates:
+        // - Update every second for smooth dot animations
+        // - Only recompute words when minute actually changes (for performance)
+        setInterval(tick, 1000);
+        
+        // Initialize timezone navigator after DOM is ready
+        setTimeout(initializeTimezoneNavigator, 100);
+        
+        // Update timezone display every minute
+        // This handles daylight saving time changes automatically
+        setInterval(updateTimezoneDisplay, 60000);
+      })();
+    </script>
+  </body>
+</html>
